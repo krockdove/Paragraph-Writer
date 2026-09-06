@@ -173,6 +173,15 @@
   .saved.warn-save{color:#8A2E12;font-weight:600;line-height:1.5}
   .saved{font-size:13.5px;color:var(--meta);margin-top:12px;font-family:var(--mono);min-height:18px}
 
+  /* 구조 추출 */
+  .structure-panel{margin-top:14px;padding:16px;background:#F7F8FA;border:2px solid var(--line);border-radius:3px}
+  .structure-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+  .structure-head strong{font-size:15px}
+  .structure-area{width:100%;min-height:180px;resize:vertical;box-sizing:border-box;background:#fff;border:2px solid var(--line);border-radius:3px;padding:12px;font-family:var(--mono);font-size:14px;line-height:1.65;color:var(--ink);outline:0}
+  .structure-area:focus{border-color:var(--focus)}
+  .structure-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .structure-note{font-size:13px;color:var(--meta);line-height:1.5;margin-top:9px}
+
   :focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 
   .side-toggle{display:none}
@@ -260,7 +269,19 @@
         <button class="btn" id="btn-export-docx">DOCX로 내보내기</button>
         <button class="btn" id="btn-export">TXT로 내보내기</button>
         <button class="btn" id="btn-import">DOCX · TXT 불러오기</button>
+        <button class="btn" id="btn-structure">구조 추출</button>
         <button class="btn danger" id="btn-clear">비우기</button>
+      </div>
+      <div class="structure-panel" id="structure-panel" hidden>
+        <div class="structure-head"><strong>원고 구조</strong><span class="toolbar-note" id="structure-count"></span></div>
+        <textarea class="structure-area" id="structure-area" spellcheck="false" readonly></textarea>
+        <div class="structure-actions">
+          <button class="btn" id="btn-structure-copy">구조 복사</button>
+          <button class="btn" id="btn-structure-export">TXT로 내보내기</button>
+          <button class="btn" id="btn-structure-new">이 구조로 새 원고</button>
+          <button class="btn" id="btn-structure-close">닫기</button>
+        </div>
+        <div class="structure-note">지문·대사의 순서만 추출합니다. 새 원고를 만들면 같은 순서의 빈 문단이 생성됩니다.</div>
       </div>
       <div class="confirm" id="confirm" hidden>
         <span>원고를 모두 지웁니다. 되돌릴 수 없습니다.</span>
@@ -699,6 +720,98 @@
     a.click();
     URL.revokeObjectURL(a.href);
   });
+  /* ---------- 구조 추출 · 템플릿 ---------- */
+  var structurePanel = $("structure-panel"), structureArea = $("structure-area"), structureCount = $("structure-count");
+
+  function getStructure(){
+    var nar = 0, dia = 0, out = [];
+    state.blocks.forEach(function(b){
+      var type = classify(b.text);
+      if(type === "narration"){
+        nar++;
+        out.push("[지문 " + pad(nar) + "]");
+      }else if(type === "dialogue"){
+        dia++;
+        out.push("[대사 " + pad(dia) + "]");
+      }
+    });
+    return {text: out.join("\n"), narration:nar, dialogue:dia, total:nar+dia};
+  }
+
+  function makeStructureText(){
+    var s = getStructure();
+    structureArea.value = s.text || "추출할 지문·대사가 없습니다.";
+    structureCount.textContent = s.total + "개 · 지문 " + s.narration + " · 대사 " + s.dialogue;
+    return s;
+  }
+
+  $("btn-structure").addEventListener("click", function(){
+    makeStructureText();
+    structurePanel.hidden = false;
+    structureArea.focus();
+    structureArea.select();
+  });
+
+  $("btn-structure-close").addEventListener("click", function(){
+    structurePanel.hidden = true;
+  });
+
+  $("btn-structure-copy").addEventListener("click", function(){
+    var s = getStructure();
+    if(!s.total){
+      savedEl.textContent = "추출할 지문·대사가 없습니다";
+      return;
+    }
+    var text = s.text;
+    function done(){ savedEl.className = "saved"; savedEl.textContent = "원고 구조를 클립보드에 복사했습니다"; }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done, function(){
+        structureArea.focus(); structureArea.select();
+        try{ document.execCommand("copy"); done(); }catch(err){ savedEl.textContent = "구조를 선택했으니 Ctrl+C로 복사하세요"; }
+      });
+    }else{
+      structureArea.focus(); structureArea.select();
+      try{ document.execCommand("copy"); done(); }catch(err){ savedEl.textContent = "구조를 선택했으니 Ctrl+C로 복사하세요"; }
+    }
+  });
+
+  $("btn-structure-export").addEventListener("click", function(){
+    var s = getStructure();
+    if(!s.total){
+      savedEl.textContent = "내보낼 지문·대사가 없습니다";
+      return;
+    }
+    download(new Blob(["\ufeff" + s.text + "\n"], {type:"text/plain;charset=utf-8"}),
+      (state.title.trim() || "원고") + "-구조.txt");
+    savedEl.className = "saved";
+    savedEl.textContent = "원고 구조를 TXT로 내보냈습니다";
+  });
+
+  $("btn-structure-new").addEventListener("click", function(){
+    var s = getStructure();
+    if(!s.total){
+      savedEl.textContent = "새 원고로 만들 구조가 없습니다";
+      return;
+    }
+    if(!confirm("현재 원고를 지우고 이 구조로 새 원고를 만들까요?\n현재 원고의 내용은 되돌릴 수 없습니다.")) return;
+
+    var newBlocks = [];
+    state.blocks.forEach(function(b){
+      var type = classify(b.text);
+      if(type === "narration") newBlocks.push({id:uid++, text:""});
+      else if(type === "dialogue") newBlocks.push({id:uid++, text:'""'});
+    });
+    if(!newBlocks.length) newBlocks = [{id:uid++, text:""}];
+
+    state.blocks = newBlocks;
+    activeId = newBlocks[0].id;
+    rebuild(activeId, state.blocks[0].text.length > 1 ? 1 : 0);
+    save();
+    structurePanel.hidden = true;
+    savedEl.className = "saved";
+    savedEl.textContent = "같은 구조의 새 원고를 만들었습니다";
+  });
+
   /* ----- DOCX 내보내기 (한글에서 열어 hwpx로 저장할 수 있습니다) ----- */
   var CRC_TABLE = (function(){
     var t = new Uint32Array(256), c, n, k;
