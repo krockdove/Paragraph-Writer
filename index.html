@@ -743,10 +743,10 @@
       var type = classify(b.text);
       if(type === "narration"){
         nar++;
-        out.push("[지문 " + pad(nar) + "]");
+        out.push("<!-- 지문 " + pad(nar) + " -->");
       }else if(type === "dialogue"){
         dia++;
-        out.push("[대사 " + pad(dia) + "]");
+        out.push("<!-- 대사 " + pad(dia) + " -->");
       }
     });
     return {text: out.join("\n"), narration:nar, dialogue:dia, total:nar+dia};
