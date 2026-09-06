@@ -181,6 +181,12 @@
   .structure-area:focus{border-color:var(--focus)}
   .structure-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
   .structure-note{font-size:13px;color:var(--meta);line-height:1.5;margin-top:9px}
+  .template-box{margin-top:16px;padding-top:14px;border-top:1px solid var(--line-soft)}
+  .template-list{display:flex;flex-direction:column;gap:7px}
+  .template-item{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line-soft);border-radius:3px;padding:9px 10px}
+  .template-name{flex:1;min-width:0;font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .template-meta{font-family:var(--mono);font-size:12px;color:var(--meta);white-space:nowrap}
+  .template-item .btn{padding:6px 9px;font-size:12px}
 
   :focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 
@@ -278,10 +284,16 @@
         <div class="structure-actions">
           <button class="btn" id="btn-structure-copy">구조 복사</button>
           <button class="btn" id="btn-structure-export">TXT로 내보내기</button>
+          <button class="btn" id="btn-structure-save">구조 저장</button>
           <button class="btn" id="btn-structure-new">이 구조로 새 원고</button>
           <button class="btn" id="btn-structure-close">닫기</button>
         </div>
         <div class="structure-note">지문·대사의 순서만 추출합니다. 새 원고를 만들면 같은 순서의 빈 문단이 생성됩니다.</div>
+        <div class="template-box">
+          <div class="structure-head"><strong>저장된 구조 템플릿</strong><span class="toolbar-note" id="template-count"></span></div>
+          <div id="template-list" class="template-list"></div>
+          <div id="template-empty" class="structure-note">저장한 구조가 없습니다.</div>
+        </div>
       </div>
       <div class="confirm" id="confirm" hidden>
         <span>원고를 모두 지웁니다. 되돌릴 수 없습니다.</span>
@@ -304,7 +316,8 @@
     blocks: [{id:uid++, text:""}],
     spaces: false,
     labels: true,
-    goals: {narration:0, dialogue:0, total:0, chars:0, threshold:0, reach:0}
+    goals: {narration:0, dialogue:0, total:0, chars:0, threshold:0, reach:0},
+    templates: []
   };
 
   var GOALS = [
@@ -722,6 +735,7 @@
   });
   /* ---------- 구조 추출 · 템플릿 ---------- */
   var structurePanel = $("structure-panel"), structureArea = $("structure-area"), structureCount = $("structure-count");
+  var templateList = $("template-list"), templateEmpty = $("template-empty"), templateCount = $("template-count");
 
   function getStructure(){
     var nar = 0, dia = 0, out = [];
@@ -736,6 +750,56 @@
       }
     });
     return {text: out.join("\n"), narration:nar, dialogue:dia, total:nar+dia};
+  }
+
+  function getStructureTypes(){
+    var types = [];
+    state.blocks.forEach(function(b){
+      var type = classify(b.text);
+      if(type === "narration" || type === "dialogue") types.push(type);
+    });
+    return types;
+  }
+
+  function renderTemplates(){
+    templateList.innerHTML = "";
+    var list = state.templates || [];
+    templateCount.textContent = list.length ? list.length + "개" : "";
+    templateEmpty.hidden = list.length > 0;
+    list.forEach(function(t, index){
+      var item = document.createElement("div"); item.className = "template-item";
+      var name = document.createElement("span"); name.className = "template-name"; name.textContent = t.name;
+      var meta = document.createElement("span"); meta.className = "template-meta";
+      var nar = t.types.filter(function(x){return x === "narration";}).length;
+      var dia = t.types.filter(function(x){return x === "dialogue";}).length;
+      meta.textContent = t.types.length + "개 · 지문 " + nar + " · 대사 " + dia;
+      var use = document.createElement("button"); use.className = "btn"; use.textContent = "사용";
+      use.addEventListener("click", function(){ useTemplate(index); });
+      var del = document.createElement("button"); del.className = "btn"; del.textContent = "삭제";
+      del.addEventListener("click", function(){
+        if(!confirm("'" + t.name + "' 구조를 삭제할까요?")) return;
+        state.templates.splice(index, 1); save(); renderTemplates();
+      });
+      item.appendChild(name); item.appendChild(meta); item.appendChild(use); item.appendChild(del);
+      templateList.appendChild(item);
+    });
+  }
+
+  function buildBlocksFromTypes(types){
+    return types.map(function(type){ return {id:uid++, text:type === "dialogue" ? '""' : ""}; });
+  }
+
+  function useTemplate(index){
+    var t = state.templates[index];
+    if(!t || !t.types.length) return;
+    if(!confirm("현재 원고를 지우고 '" + t.name + "' 구조로 새 원고를 만들까요?\n현재 원고의 내용은 되돌릴 수 없습니다.")) return;
+    state.blocks = buildBlocksFromTypes(t.types);
+    activeId = state.blocks[0].id;
+    rebuild(activeId, t.types[0] === "dialogue" ? 1 : 0);
+    structurePanel.hidden = true;
+    save();
+    savedEl.className = "saved";
+    savedEl.textContent = "'" + t.name + "' 구조로 새 원고를 만들었습니다";
   }
 
   function makeStructureText(){
@@ -787,6 +851,25 @@
     savedEl.textContent = "원고 구조를 TXT로 내보냈습니다";
   });
 
+  $("btn-structure-save").addEventListener("click", function(){
+    var s = getStructure();
+    if(!s.total){
+      savedEl.textContent = "저장할 지문·대사가 없습니다";
+      return;
+    }
+    var defaultName = (state.title.trim() || "새 구조") + " 구조";
+    var name = prompt("이 구조의 이름을 정하세요", defaultName);
+    if(name === null) return;
+    name = name.trim();
+    if(!name) name = defaultName;
+    if(!state.templates) state.templates = [];
+    state.templates.push({name:name, types:getStructureTypes()});
+    save();
+    renderTemplates();
+    savedEl.className = "saved";
+    savedEl.textContent = "'" + name + "' 구조를 저장했습니다";
+  });
+
   $("btn-structure-new").addEventListener("click", function(){
     var s = getStructure();
     if(!s.total){
@@ -795,14 +878,8 @@
     }
     if(!confirm("현재 원고를 지우고 이 구조로 새 원고를 만들까요?\n현재 원고의 내용은 되돌릴 수 없습니다.")) return;
 
-    var newBlocks = [];
-    state.blocks.forEach(function(b){
-      var type = classify(b.text);
-      if(type === "narration") newBlocks.push({id:uid++, text:""});
-      else if(type === "dialogue") newBlocks.push({id:uid++, text:'""'});
-    });
+    var newBlocks = buildBlocksFromTypes(getStructureTypes());
     if(!newBlocks.length) newBlocks = [{id:uid++, text:""}];
-
     state.blocks = newBlocks;
     activeId = newBlocks[0].id;
     rebuild(activeId, state.blocks[0].text.length > 1 ? 1 : 0);
@@ -1068,7 +1145,7 @@
     clearTimeout(timer);
     timer = setTimeout(function(){
       var data = JSON.stringify({
-        title: state.title, spaces: state.spaces, labels: state.labels, goals: state.goals,
+        title: state.title, spaces: state.spaces, labels: state.labels, goals: state.goals, templates: state.templates,
         blocks: state.blocks.map(function(b){ return b.text; })
       });
       if(!(window.storage && window.storage.set)){ noStorage(); return; }
@@ -1102,13 +1179,14 @@
   });
 
   function load(){
-    if(!(window.storage && window.storage.get)){ build(); noStorage(); return; }
+    if(!(window.storage && window.storage.get)){ build(); renderTemplates(); noStorage(); return; }
     window.storage.get("blockwriter:doc").then(function(res){
-      if(!res || !res.value){ build(); return; }
+      if(!res || !res.value){ build(); renderTemplates(); return; }
       var d = JSON.parse(res.value);
       state.title = d.title || "";
       state.spaces = !!d.spaces;
       state.labels = d.labels !== false;
+      state.templates = Array.isArray(d.templates) ? d.templates.filter(function(t){ return t && t.name && Array.isArray(t.types) && t.types.length; }) : [];
       Object.keys(state.goals).forEach(function(k){ if(d.goals && d.goals[k]) state.goals[k] = d.goals[k]; });
       state.blocks = (d.blocks && d.blocks.length ? d.blocks : [""]).map(function(t){ return {id: uid++, text: t}; });
       $("title").value = state.title;
@@ -1118,7 +1196,8 @@
       if(state.goals.threshold) $("in-threshold").value = state.goals.threshold;
       if(state.goals.reach) $("in-reach").value = state.goals.reach;
       build();
-    }, function(){ build(); noStorage(); });
+      renderTemplates();
+    }, function(){ build(); renderTemplates(); noStorage(); });
   }
 
   load();
